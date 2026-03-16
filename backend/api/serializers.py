@@ -1,10 +1,7 @@
-from decimal import Decimal
-
+from django.core.validators import validate_email
+from django.utils.html import strip_tags
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
-
-from cart.models import CartItem
-from orders.models import Order, OrderItem
 from products.models import Product
 from users.models import UserRole
 
@@ -13,12 +10,23 @@ User = get_user_model()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True, min_length=8, trim_whitespace=False)
     role = serializers.ChoiceField(choices=[UserRole.BUYER, UserRole.SELLER], write_only=True)
 
     class Meta:
         model = User
         fields = ["username", "email", "password", "role"]
+
+    def validate_username(self, value):
+        cleaned = strip_tags(value).strip()
+        if not cleaned:
+            raise serializers.ValidationError("Username cannot be empty.")
+        return cleaned
+
+    def validate_email(self, value):
+        cleaned = strip_tags(value).strip().lower()
+        validate_email(cleaned)
+        return cleaned
 
     def create(self, validated_data):
         role = validated_data.pop("role")
@@ -30,10 +38,12 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
-    password = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
 
     def validate(self, attrs):
-        user = authenticate(username=attrs["username"], password=attrs["password"])
+        username = strip_tags(attrs["username"]).strip()
+        password = attrs["password"]
+        user = authenticate(username=username, password=password)
         if not user:
             raise serializers.ValidationError({"detail": "Invalid username or password."})
         attrs["user"] = user
@@ -47,6 +57,14 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = ["id", "name", "description", "price", "stock", "seller", "created_at"]
         read_only_fields = ["id", "seller", "created_at"]
+    def validate_name(self, value):
+        cleaned = strip_tags(value).strip()
+        if not cleaned:
+            raise serializers.ValidationError("Product name cannot be empty.")
+        return cleaned
+
+    def validate_description(self, value):
+        return strip_tags(value).strip()
 
 
 class CartAddSerializer(serializers.Serializer):
@@ -65,40 +83,3 @@ class CartAddSerializer(serializers.Serializer):
         attrs["product"] = product
         return attrs
 
-
-class OrderSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Order
-        fields = ["id", "total_amount", "created_at"]
-
-
-def place_order_for_user(user):
-    cart_items = CartItem.objects.select_related("product").filter(buyer=user)
-    if not cart_items.exists():
-        raise serializers.ValidationError({"detail": "Cart is empty."})
-
-    total = Decimal("0")
-    order = Order.objects.create(buyer=user, total_amount=0)
-
-    for item in cart_items:
-        product = item.product
-        if product.stock < item.quantity:
-            order.delete()
-            raise serializers.ValidationError(
-                {"detail": f"Insufficient stock for product '{product.name}'."}
-            )
-        product.stock -= item.quantity
-        product.save(update_fields=["stock"])
-        line_total = product.price * item.quantity
-        total += line_total
-        OrderItem.objects.create(
-            order=order,
-            product=product,
-            quantity=item.quantity,
-            price=product.price,
-        )
-
-    order.total_amount = total
-    order.save(update_fields=["total_amount"])
-    cart_items.delete()
-    return order

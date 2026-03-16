@@ -1,21 +1,34 @@
-from django.db import transaction
+from django.middleware.csrf import get_token
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from api.serializers import (
-    CartAddSerializer,
-    LoginSerializer,
-    ProductSerializer,
-    RegisterSerializer,
-    place_order_for_user,
-)
+from api.serializers import CartAddSerializer, LoginSerializer, ProductSerializer, RegisterSerializer
 from cart.models import CartItem
+from orders.views import place_order_for_user
 from products.models import Product
-from users.permissions import IsBuyer, IsSeller
+from users.permissions import (
+    CanCreateOrders,
+    CanEditCart,
+    CanManageProducts,
+    IsBuyer,
+    IsSeller,
+    role_required,
+)
 
 
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CSRFCookieAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({"csrfToken": get_token(request)}, status=status.HTTP_200_OK)
+
+@method_decorator(csrf_protect, name="dispatch")
 class RegisterAPIView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -27,7 +40,8 @@ class RegisterAPIView(APIView):
             {"message": "User registered successfully.", "username": user.username},
             status=status.HTTP_201_CREATED,
         )
-
+    
+@method_decorator(csrf_protect, name="dispatch")
 class LoginAPIView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -41,32 +55,38 @@ class LoginAPIView(APIView):
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
                 "role": getattr(user.profile, "role", None),
+                "token_type": "Bearer",
             },
             status=status.HTTP_200_OK,
         )
 
 class ProductListCreateAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_permissions(self):
         if self.request.method == "POST":
-            return [permissions.IsAuthenticated(), IsSeller()]
+            return [permissions.IsAuthenticated(), IsSeller(), CanManageProducts()]
         return super().get_permissions()
 
     def get(self, request):
         products = Product.objects.all()
         serializer = ProductSerializer(products, many=True)
         return Response(serializer.data)
-
+    
+    @method_decorator(role_required("seller"))
     def post(self, request):
         serializer = ProductSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(seller=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+@method_decorator(csrf_protect, name="dispatch")
 class AddToCartAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsBuyer]
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated, IsBuyer, CanEditCart]
 
+    @method_decorator(role_required("buyer"))
     def post(self, request):
         serializer = CartAddSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -98,10 +118,12 @@ class AddToCartAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
+@method_decorator(csrf_protect, name="dispatch")
 class PlaceOrderAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsBuyer]
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated, IsBuyer, CanCreateOrders]
 
-    @transaction.atomic
+    @method_decorator(role_required("buyer"))
     def post(self, request):
         order = place_order_for_user(request.user)
         return Response(
