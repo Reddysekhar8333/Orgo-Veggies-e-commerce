@@ -7,7 +7,14 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from api.serializers import CartAddSerializer, LoginSerializer, ProductSerializer, RegisterSerializer
+from api.serializers import (
+    CartAddSerializer,
+    CartItemSerializer,
+    CartRemoveSerializer,
+    LoginSerializer,
+    ProductSerializer,
+    RegisterSerializer,
+)
 from cart.models import CartItem
 from orders.views import place_order_for_user
 from products.models import Product
@@ -71,6 +78,18 @@ class ProductListCreateAPIView(APIView):
 
     def get(self, request):
         products = Product.objects.all()
+        query = request.query_params.get("q")
+        min_price = request.query_params.get("min_price")
+        max_price = request.query_params.get("max_price")
+        in_stock = request.query_params.get("in_stock")
+        if query:
+            products = products.filter(name__icontains=query)
+        if min_price:
+            products = products.filter(price__gte=min_price)
+        if max_price:
+            products = products.filter(price__lte=max_price)
+        if in_stock == "true":
+            products = products.filter(stock__gt=0)
         serializer = ProductSerializer(products, many=True)
         return Response(serializer.data)
     
@@ -80,6 +99,38 @@ class ProductListCreateAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save(seller=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+class ProductDetailAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, _request, product_id):
+        product = Product.objects.filter(id=product_id).first()
+        if not product:
+            return Response({"detail": "Product not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ProductSerializer(product)
+        return Response(serializer.data)
+
+
+class ProductStockValidationAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, product_id):
+        product = Product.objects.filter(id=product_id).first()
+        if not product:
+            return Response({"detail": "Product not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        quantity = int(request.query_params.get("quantity", 1))
+        return Response(
+            {
+                "product_id": product.id,
+                "requested_quantity": quantity,
+                "available_stock": product.stock,
+                "is_available": quantity <= product.stock,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 
 @method_decorator(csrf_protect, name="dispatch")
 class AddToCartAPIView(APIView):
@@ -134,3 +185,31 @@ class PlaceOrderAPIView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+class CartAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated, IsBuyer, CanEditCart]
+
+    def get(self, request):
+        cart_items = CartItem.objects.filter(buyer=request.user).select_related("product")
+        serializer = CartItemSerializer(cart_items, many=True)
+        return Response(serializer.data)
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class RemoveCartItemAPIView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated, IsBuyer, CanEditCart]
+
+    @method_decorator(role_required("buyer"))
+    def post(self, request):
+        serializer = CartRemoveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_id = serializer.validated_data["product_id"]
+
+        deleted, _ = CartItem.objects.filter(buyer=request.user, product_id=product_id).delete()
+        if not deleted:
+            return Response({"detail": "Cart item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({"message": "Item removed from cart.", "product_id": product_id})
+

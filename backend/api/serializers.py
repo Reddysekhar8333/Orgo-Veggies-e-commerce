@@ -2,6 +2,7 @@ from django.core.validators import validate_email
 from django.utils.html import strip_tags
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
+from cart.models import CartItem
 from products.models import Product
 from users.models import UserRole
 
@@ -83,3 +84,16 @@ class CartAddSerializer(serializers.Serializer):
         attrs["product"] = product
         return attrs
 
+class CartRemoveSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+
+
+class CartItemSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField(source="product.id", read_only=True)
+    name = serializers.CharField(source="product.name", read_only=True)
+    price = serializers.DecimalField(source="product.price", max_digits=10, decimal_places=2, read_only=True)
+    stock = serializers.IntegerField(source="product.stock", read_only=True)
+
+    class Meta:
+        model = CartItem
+        fields = ["product_id", "name", "price", "stock", "quantity"]

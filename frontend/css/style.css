@@ -1,4 +1,54 @@
+:root {
+  --ov-primary: #2f855a;
+  --ov-secondary: #f7fafc;
+}
+
 body {
-  font-family: Arial, sans-serif;
-  margin: 2rem;
+  background: #f8f9fa;
+}
+
+.site-header {
+  background: #fff;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.brand-badge {
+  color: var(--ov-primary);
+  font-weight: 700;
+}
+
+.hero {
+  background: linear-gradient(120deg, #e6fffa, #f0fff4);
+  border-radius: 1rem;
+  padding: 3rem 2rem;
+}
+
+.page-title {
+  font-weight: 700;
+}
+
+.product-card {
+  height: 100%;
+}
+
+.stock-pill {
+  font-size: 0.8rem;
+}
+
+.seller-metric {
+  background: #fff;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.auth-card,
+.checkout-card {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.footer {
+  color: #6c757d;
+  font-size: 0.9rem;
 }
